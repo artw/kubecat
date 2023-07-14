@@ -9,6 +9,8 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strings"
+	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	corev1 "k8s.io/api/core/v1"
@@ -20,8 +22,9 @@ import (
 var (
 	codec = scheme.Codecs.UniversalDeserializer()
 
-	etcdEndpoint = flag.String("etcd-endpoint", getEnv("ETCDCTL_ENDPOINTS", "localhost:2379"), "etcd endpoint")
-	etcdKey      = flag.String("etcd-key", "", "etcd key of the object")
+	etcdEndpoints = flag.String("etcd-endpoint", getEnv("ETCDCTL_ENDPOINTS", "localhost:2379"), "etcd endpoint")
+
+	etcdKey string
 
 	// mTLS
 	caFile   = flag.String("cafile", getEnv("ETCDCTL_CACERT", ""), "path to the CA certificate file")
@@ -41,9 +44,13 @@ func getEnv(key, fallback string) string {
 func main() {
 	corev1.AddToScheme(scheme.Scheme)
 
+	// Parsing etcdKey as the default argument
 	flag.Parse()
+	if flag.NArg() > 0 {
+		etcdKey = flag.Arg(0)
+	}
 
-	if *help {
+	if etcdKey == "" || *help {
 		fmt.Println("kubecat usage:")
 		flag.PrintDefaults()
 		os.Exit(0)
@@ -73,7 +80,7 @@ func main() {
 
 	// Connect to etcd
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints: []string{*etcdEndpoint},
+		Endpoints: strings.Split(*etcdEndpoints, ","), // Comma-separated endpoints
 		TLS:       tlsConfig,
 	})
 	if err != nil {
@@ -82,14 +89,22 @@ func main() {
 
 	defer cli.Close()
 
+	// Crash on 3 second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err = cli.Sync(ctx)
+	if err != nil {
+		log.Fatalf("failed to connect to etcd: %v", err)
+	}
+
 	// Write the stdin to the key as value
 	if *write {
-		if err := readYAMLAndWriteToEtcd(cli, *etcdKey); err != nil {
+		if err := readYAMLAndWriteToEtcd(cli, etcdKey); err != nil {
 			log.Fatal(err)
 		}
 		// Read the value instead
 	} else {
-		obj, err := fetchObject(cli, *etcdKey)
+		obj, err := fetchObject(cli, etcdKey)
 		if err != nil {
 			log.Fatal(err)
 		}
