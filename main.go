@@ -20,20 +20,34 @@ import (
 var (
 	codec = scheme.Codecs.UniversalDeserializer()
 
-	etcdEndpoint = flag.String("etcd-endpoint", "localhost:2379", "etcd endpoint")
+	etcdEndpoint = flag.String("etcd-endpoint", getEnv("ETCDCTL_ENDPOINTS", "localhost:2379"), "etcd endpoint")
 	etcdKey      = flag.String("etcd-key", "", "etcd key of the object")
 
-	// New flags for mTLS
-	caFile   = flag.String("cafile", "", "path to the CA certificate file")
-	certFile = flag.String("certfile", "", "path to the client certificate file")
-	keyFile  = flag.String("keyfile", "", "path to the client key file")
+	// mTLS
+	caFile   = flag.String("cafile", getEnv("ETCDCTL_CACERT", ""), "path to the CA certificate file")
+	certFile = flag.String("certfile", getEnv("ETCDCTL_CERT", ""), "path to the client certificate file")
+	keyFile  = flag.String("keyfile", getEnv("ETCDCTL_KEY", ""), "path to the client key file")
 	write    = flag.Bool("write", false, "write to etcd")
+	help     = flag.Bool("help", false, "display help")
 )
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
 
 func main() {
 	corev1.AddToScheme(scheme.Scheme)
 
 	flag.Parse()
+
+	if *help {
+		fmt.Println("kubecat usage:")
+		flag.PrintDefaults()
+		os.Exit(0)
+	}
 
 	// Load client cert
 	cert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
@@ -46,6 +60,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	caCertPool := x509.NewCertPool()
 	caCertPool.AppendCertsFromPEM(caCert)
 
@@ -64,7 +79,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	defer cli.Close()
+
 	// Write the stdin to the key as value
 	if *write {
 		if err := readYAMLAndWriteToEtcd(cli, *etcdKey); err != nil {
