@@ -5,7 +5,7 @@
 Kubecat is a utility for directly manipulating the etcd state of a Kubernetes cluster. This is a **dangerous operation** and should only be done by experienced operators who understand the risks. Directly modifying etcd can lead to inconsistencies in the cluster state and potential data loss.
 
 **Use this utility at your own risk. Always take a backup of your etcd cluster before making any changes.**
-
+![Alt Text](https://media.giphy.com/media/xUA7ba9aksCuKR9dgA/giphy.gif)
 ## Installation
 
 The project can be built with `make`.
