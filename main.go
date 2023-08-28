@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -23,8 +24,7 @@ var (
 	codec = scheme.Codecs.UniversalDeserializer()
 
 	etcdEndpoints = flag.String("etcd-endpoint", getEnv("ETCDCTL_ENDPOINTS", "localhost:2379"), "etcd endpoint")
-
-	etcdKey string
+	etcdKey       string
 
 	// mTLS
 	caFile   = flag.String("cafile", getEnv("ETCDCTL_CACERT", ""), "path to the CA certificate file")
@@ -32,6 +32,7 @@ var (
 	keyFile  = flag.String("keyfile", getEnv("ETCDCTL_KEY", ""), "path to the client key file")
 	write    = flag.Bool("write", false, "write to etcd")
 	help     = flag.Bool("help", false, "display help")
+	format   = flag.String("f", getEnv("KUBECAT_FORMAT", "json"), "format for input/output (json or yaml)")
 )
 
 func getEnv(key, fallback string) string {
@@ -86,10 +87,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	defer cli.Close()
 
-	// Crash on 3 second timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	err = cli.Sync(ctx)
@@ -97,24 +96,16 @@ func main() {
 		log.Fatalf("failed to connect to etcd: %v", err)
 	}
 
-	// Write the stdin to the key as value
 	if *write {
-		if err := readYAMLAndWriteToEtcd(cli, etcdKey); err != nil {
+		if err := readAndWriteToEtcd(cli, etcdKey, *format); err != nil {
 			log.Fatal(err)
 		}
-		// Read the value instead
 	} else {
 		obj, err := fetchObject(cli, etcdKey)
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		yamlBytes, err := yaml.Marshal(obj)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		fmt.Println(string(yamlBytes))
+		printObject(obj, *format)
 	}
 }
 
@@ -136,15 +127,21 @@ func fetchObject(cli *clientv3.Client, key string) (runtime.Object, error) {
 	return obj, nil
 }
 
-func readYAMLAndWriteToEtcd(cli *clientv3.Client, key string) error {
-	// Read YAML from stdin.
-	yamlBytes, err := ioutil.ReadAll(os.Stdin)
+func readAndWriteToEtcd(cli *clientv3.Client, key string, format string) error {
+	inputBytes, err := ioutil.ReadAll(os.Stdin)
 	if err != nil {
 		return err
 	}
 
-	// Deserialize the YAML into a runtime.Object.
-	obj, _, err := codec.Decode(yamlBytes, nil, nil)
+	var obj runtime.Object
+	if format == "json" {
+		err = json.Unmarshal(inputBytes, &obj)
+	} else if format == "yaml" {
+		err = yaml.Unmarshal(inputBytes, &obj)
+	} else {
+		return fmt.Errorf("unsupported format: %s", format)
+	}
+
 	if err != nil {
 		return err
 	}
@@ -158,4 +155,24 @@ func readYAMLAndWriteToEtcd(cli *clientv3.Client, key string) error {
 	// Write the protobuf data to etcd.
 	_, err = cli.Put(context.Background(), key, string(protobufBytes))
 	return err
+}
+
+func printObject(obj runtime.Object, format string) {
+	var outputBytes []byte
+	var err error
+
+	switch format {
+	case "yaml":
+		outputBytes, err = yaml.Marshal(obj)
+	case "json":
+		outputBytes, err = json.MarshalIndent(obj, "", "  ")
+	default:
+		log.Fatalf("unsupported format: %s", format)
+	}
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(string(outputBytes))
 }
